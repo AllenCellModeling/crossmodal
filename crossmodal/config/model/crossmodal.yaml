@@ -1,0 +1,112 @@
+_target_: crossmodal.models.CrossModalVAE
+latent_dim: 128
+x_labels: ['image', 'rna']
+encoder:
+  image:
+    _target_: serotiny.networks.BasicCNN
+    in_channels: 
+    output_dim: 2
+    _args_: 
+    - ${model.x_dim}
+    - ${model.latent_dim}
+  rna: 
+    _target_: torch.nn.Embedding
+    _args_: 
+    - ${data.loaders.workflow.num_classes}
+    - ${model.latent_dim}
+
+decoder:
+  image:
+    _target_: serotiny.networks.BasicCNN
+    in_channels: 
+    output_dim: 2
+    _args_: 
+    - ${model.x_dim}
+    - ${model.latent_dim}
+  rna: 
+    _target_: torch.nn.Embedding
+    _args_: 
+    - ${data.loaders.workflow.num_classes}
+    - ${model.latent_dim}
+
+reconstruction_loss:
+  image:
+    _target_: torch.nn.MSELoss
+    reduction: 'none'
+  rna:
+    _target_: torch.nn.MSELoss
+    reduction: 'none'
+
+latent_loss:
+  image:
+    _target_: serotiny.losses.AdversarialLoss
+    discriminator:
+      _target_: serotiny.networks.MLP
+      hidden_layers: [64]
+      _args_: 
+      - ${model.latent_dim}
+      - ${data.loaders.workflow.num_classes}
+    loss:
+      _target_: torch.nn.CrossEntropyLoss
+    argmax: True
+  rna:
+    _target_: serotiny.losses.AdversarialLoss
+    discriminator:
+      _target_: serotiny.networks.MLP
+      hidden_layers: [64]
+      _args_: 
+      - ${model.latent_dim}
+      - ${data.loaders.imaging_mode.num_classes}
+    loss:
+      _target_: torch.nn.CrossEntropyLoss
+    argmax: True
+
+
+prior:
+  image: 
+    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+    dimensionality: ${model.latent_dim}
+  rna: 
+    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+    dimensionality: ${model.latent_dim}
+
+latent_loss_weights:
+  image: 1
+  rna: 1
+
+latent_loss_target:
+  image: ["image", "rna"]
+  rna: ["rna", "image"]
+
+latent_loss_backprop_when: # when to optimize each subnetwork
+  adv: 1
+
+latent_loss_optimizer: 
+  adv:
+    keys: ['image', 'rna']
+    opt:
+      _partial_: true
+      _target_: torch.optim.adam.Adam
+      lr: 0.001
+
+latent_loss_scheduler: 
+  adv:
+    _partial_: true
+    _target_: torch.optim.lr_scheduler.StepLR
+    step_size: 45
+
+optimizer: 
+  main:
+    keys: ['image', 'rna']
+    opt:
+      _partial_: true
+      _target_: torch.optim.Adam
+      lr: 1e-3
+
+lr_scheduler:
+  main:
+    _partial_: true
+    _target_: torch.optim.lr_scheduler.StepLR
+    step_size: 45
+
+

@@ -1,0 +1,27 @@
+_target_: serotiny.datamodules.ManifestDatamodule
+
+path: /allen/aics/modeling/ritvik/projects/data_processing/variance_neighbors3.csv
+batch_size: 32
+num_workers: 0
+loaders:
+  cell_id:
+    _target_: serotiny.io.dataframe.loaders.LoadColumns
+    contains: "CellId"
+  X:
+    _target_: serotiny.io.dataframe.loaders.LoadColumns
+    contains: "dna_shcoeffs_L"
+    dtype: "float32"
+  image:
+    _target_: serotiny.io.dataframe.loaders.LoadImage
+    column: path
+    select_channels: ['dna_seg']
+    reader: aicsimageio.readers.ome_tiff_reader.OmeTiffReader
+    load_as_torch: True
+    transforms: 
+      - _target_: torchio.transforms.RescaleIntensity
+        out_min_max: [0, 1]
+split_column: 'split'
+pin_memory: True
+shuffle:  True
+drop_last:  False
+persistent_workers: False
