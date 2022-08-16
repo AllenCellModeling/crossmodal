@@ -1,41 +1,52 @@
 _target_: crossmodal.models.CrossModalVAE
-latent_dim: 128
+latent_dim: [128]
 x_labels: ['image', 'rna']
+class_labels: []
+image_dims: 
+rna_dims: 
+x_dims: [${image_dims}, {rna_dims}]
 encoder:
   image:
     _target_: serotiny.networks.BasicCNN
-    in_channels: 
-    output_dim: 2
-    _args_: 
-    - ${model.x_dim}
-    - ${model.latent_dim}
+    in_channels: ${image_dims}
+    output_dim: ${latent_dim}
+    hidden_channels: [4, 4, 4, 4]
+    kernel_size: 3
+    stride: 1
+    max_pool_layers: [2]
   rna: 
-    _target_: torch.nn.Embedding
+    _target_: serotiny.networks.MLP
+    scale_output: 1
+    hidden_layers: [256, 256]
     _args_: 
-    - ${data.loaders.workflow.num_classes}
-    - ${model.latent_dim}
+    - ${rna_dims}
+    - ${latent_dim}
 
 decoder:
   image:
-    _target_: serotiny.networks.BasicCNN
-    in_channels: 
-    output_dim: 2
-    _args_: 
-    - ${model.x_dim}
-    - ${model.latent_dim}
+    _target_: crossmodal.networks.SymmetricImageDecoder
+    encoder: ${model.encoder.image}
   rna: 
-    _target_: torch.nn.Embedding
+    _target_: serotiny.networks.MLP
+    scale_output: 1
+    hidden_layers: [256, 256]
     _args_: 
-    - ${data.loaders.workflow.num_classes}
-    - ${model.latent_dim}
+    - ${latent_dim}
+    - ${rna_dims}
 
 reconstruction_loss:
-  image:
+  "image+image":
     _target_: torch.nn.MSELoss
     reduction: 'none'
-  rna:
+  "rna+rna":
     _target_: torch.nn.MSELoss
     reduction: 'none'
+  "image+rna":
+    _target_: torch.nn.MSELoss
+    reduction: "none"
+  "rna+image"
+    _target_: torch.nn.MSELoss
+    reduction: "none"
 
 latent_loss:
   image:
@@ -45,9 +56,9 @@ latent_loss:
       hidden_layers: [64]
       _args_: 
       - ${model.latent_dim}
-      - ${data.loaders.workflow.num_classes}
+      - 1
     loss:
-      _target_: torch.nn.CrossEntropyLoss
+      _target_: torch.nn.BCELoss
     argmax: True
   rna:
     _target_: serotiny.losses.AdversarialLoss
@@ -56,11 +67,10 @@ latent_loss:
       hidden_layers: [64]
       _args_: 
       - ${model.latent_dim}
-      - ${data.loaders.imaging_mode.num_classes}
+      - 1
     loss:
-      _target_: torch.nn.CrossEntropyLoss
+      _target_: torch.nn.BCELoss
     argmax: True
-
 
 prior:
   image: 
@@ -71,15 +81,27 @@ prior:
     dimensionality: ${model.latent_dim}
 
 latent_loss_weights:
-  image: 1
-  rna: 1
+  image: [1,1,1,1,1]
+  rna: [1,1,1,1,1]
 
 latent_loss_target:
-  image: ["image", "rna"]
-  rna: ["rna", "image"]
+  image: 
+    - ["image_binary", {class_labels}]
+    - ["image_binary", {class_labels}]
+    - ["image_binary" {class_labels}]
+    - ["image_binary", {class_labels}]
+    - [rna_binary]
+  rna: 
+    - ["rna_binary", {class_labels}]
+    - ["rna_binary", {class_labels}]
+    - ["rna_binary", {class_labels}]
+    - ["rna_binary", {class_labels}]
+    - [image_binary, {class_labels}]
+    - [rna_binary]
 
-latent_loss_backprop_when: # when to optimize each subnetwork
-  adv: 1
+# latent_loss_backprop_when: # when to optimize each subnetwork
+#   image: [1, 5]
+#   rna: [1, 5]
 
 latent_loss_optimizer: 
   adv:

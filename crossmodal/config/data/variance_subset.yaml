@@ -20,6 +20,13 @@ loaders:
     transforms: 
       - _target_: torchio.transforms.RescaleIntensity
         out_min_max: [0, 1]
+  cell_stage:
+    _target_: serotiny.io.dataframe.loaders.LoadClass
+    y_encoded_label: cell_stage_numericbins
+    num_classes: 6
+    binary: True    
+  image_binary: 0
+  rna_binary: 1
 split_column: 'split'
 pin_memory: True
 shuffle:  True
