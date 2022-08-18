@@ -1,6 +1,6 @@
 _target_: serotiny.datamodules.ManifestDatamodule
 
-path: /allen/aics/modeling/ritvik/projects/data_processing/variance_neighbors3.csv
+path: /storage/variance_subset_fbl/resize_0_25/manifest_equals_0_1.csv
 batch_size: 32
 num_workers: 0
 loaders:
@@ -16,17 +16,14 @@ loaders:
     column: path
     select_channels: ['dna_seg']
     reader: aicsimageio.readers.ome_tiff_reader.OmeTiffReader
-    load_as_torch: True
-    transforms: 
-      - _target_: torchio.transforms.RescaleIntensity
-        out_min_max: [0, 1]
+    transform: 
+      _target_: torchio.transforms.RescaleIntensity
+      out_min_max: [0, 1]
   cell_stage:
     _target_: serotiny.io.dataframe.loaders.LoadClass
-    y_encoded_label: cell_stage_numericbins
+    y_encoded_label: cell_stage_numeric
     num_classes: 6
     binary: True    
-  image_binary: 0
-  rna_binary: 1
 split_column: 'split'
 pin_memory: True
 shuffle:  True

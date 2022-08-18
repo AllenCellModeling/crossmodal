@@ -1,3 +1,34 @@
+_aux_:
+  _: &input1 "image"
+  _: &input2 "rna"
+  _: &input1_binary 1
+  _: &input2_binary 0
+  _: &latent_dim 10
+  _: &in_channels 1
+  _: &hidden_channels 4
+  _: &kernel_size 3
+  _: &stride 1
+  _: &input_dims [36, 72, 91]
+  _: &conv_block
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.LazyConv3d
+        out_channels: *hidden_channels
+        kernel_size: *kernel_size
+        stride: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.LazyBatchNorm3d
+  _: &encoder_conv
+    _target_: torch.nn.Sequential
+    _args_:
+      - *conv_block
+      - *conv_block
+      - *conv_block
+  _: &encoder:
+      _target_: torch.nn.Sequential
+      _args_:
+        - *encoder_conv
+
 _target_: crossmodal.models.CrossModalVAE
 latent_dim: [128]
 x_labels: ['image', 'rna']
@@ -6,15 +37,14 @@ image_dims:
 rna_dims: 
 x_dims: [${image_dims}, {rna_dims}]
 encoder:
-  image:
-    _target_: serotiny.networks.BasicCNN
-    in_channels: ${image_dims}
-    output_dim: ${latent_dim}
-    hidden_channels: [4, 4, 4, 4]
-    kernel_size: 3
-    stride: 1
-    max_pool_layers: [2]
-  rna: 
+  *input1:
+    _target_: torch.nn.Sequential
+    _args_:
+      - *encoder_conv
+      - _target_: serotiny.networks.layers.Flatten
+      - _target_: torch.nn.LazyLinear
+        out_features: *latent_dim
+  *input2: 
     _target_: serotiny.networks.MLP
     scale_output: 1
     hidden_layers: [256, 256]
@@ -23,10 +53,13 @@ encoder:
     - ${latent_dim}
 
 decoder:
-  image:
-    _target_: crossmodal.networks.SymmetricImageDecoder
-    encoder: ${model.encoder.image}
-  rna: 
+  *input1:
+    _target_: crossmodal.models.networks.ImageDecoder3D
+    encoder: *encoder
+    input_dims: *input_dims
+    in_channels: *in_channels
+    latent_dim: *latent_dim
+  *input2: 
     _target_: serotiny.networks.MLP
     scale_output: 1
     hidden_layers: [256, 256]
@@ -49,7 +82,7 @@ reconstruction_loss:
     reduction: "none"
 
 latent_loss:
-  image:
+  *input1:
     _target_: serotiny.losses.AdversarialLoss
     discriminator:
       _target_: serotiny.networks.MLP
@@ -60,7 +93,7 @@ latent_loss:
     loss:
       _target_: torch.nn.BCELoss
     argmax: True
-  rna:
+  *input2:
     _target_: serotiny.losses.AdversarialLoss
     discriminator:
       _target_: serotiny.networks.MLP
@@ -73,31 +106,33 @@ latent_loss:
     argmax: True
 
 prior:
-  image: 
+  *input1: 
     _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
     dimensionality: ${model.latent_dim}
-  rna: 
+  *input2: 
     _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
     dimensionality: ${model.latent_dim}
 
 latent_loss_weights:
-  image: [1,1,1,1,1]
-  rna: [1,1,1,1,1]
+  *input1: [1,1,1,1,1]
+  *input2: [1,1,1,1,1]
 
 latent_loss_target:
-  image: 
-    - ["image_binary", {class_labels}]
-    - ["image_binary", {class_labels}]
-    - ["image_binary" {class_labels}]
-    - ["image_binary", {class_labels}]
-    - [rna_binary]
-  rna: 
-    - ["rna_binary", {class_labels}]
-    - ["rna_binary", {class_labels}]
-    - ["rna_binary", {class_labels}]
-    - ["rna_binary", {class_labels}]
-    - [image_binary, {class_labels}]
-    - [rna_binary]
+  class_labels: class_labels
+
+changing_latent_loss_target:
+  *input1: 
+    - [*input1_binary]
+    - [*input1_binary]
+    - [*input1_binary]
+    - [*input1_binary]
+    - [*input2_binary]
+  *input2: 
+    - [*input2_binary]
+    - [*input2_binary]
+    - [*input2_binary]
+    - [*input2_binary]
+    - [*input1_binary]
 
 # latent_loss_backprop_when: # when to optimize each subnetwork
 #   image: [1, 5]

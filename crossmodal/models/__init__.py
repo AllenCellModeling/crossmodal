@@ -1,1 +1,1 @@
-from .networks import ImageDecoder
+from .networks import ImageDecoder3D

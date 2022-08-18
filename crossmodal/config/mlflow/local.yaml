@@ -1,4 +1,4 @@
 defaults:
   - /defaults/mlflow/default@_here_ #inherit serotiny's mlflow config
 
-tracking_uri: http://prd-aics-dcp-037:9898
+tracking_uri: http://prd-aics-dcp-037:9899

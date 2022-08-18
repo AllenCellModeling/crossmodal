@@ -1,78 +1,57 @@
 import numpy as np
 
 import torch.nn as nn
+import torch
 
 from serotiny.networks import BasicCNN
 
-def calculate_image_size(encoder, in_channels, input_dims):
-
-    dummy_out, intermediate_sizes = encoder.conv_forward(
-        torch.zeros(1, in_channels, *input_dims), return_sizes=True
-    )
-
-    compressed_img_shape = dummy_out.shape[2:]
-
-    intermediate_sizes = [input_dims] + intermediate_sizes[:-1]
-    intermediate_sizes = intermediate_sizes[::-1]
-    return intermediate_sizes, compressed_img_shape
-
-class SymmetricImageDecoder(nn.Module):
+class ImageDecoder3D(nn.Module):
     def __init__(
         self,
         encoder,
+        input_dims,
+        in_channels,
+        latent_dim,
     ):
         super().__init__()
+        inp = torch.zeros(1, in_channels, *input_dims)
+        compressed_img_shape = encoder(inp).shape
+        self.compressed_img_shape = compressed_img_shape[2:]
         
-        
-        intermediate_sizes, compressed_img_shape = calculate_image_size(encoder, in_channels, input_dims)
-        in_channels = encoder.in_channels
-        output_channels = in_channels
-        input_dims = encoder.input_dims
-        output_dims = tuple(input_dims)
+        orig_img_size = np.prod(input_dims)
+        deconv_layers = []
+        encoder = encoder[0]
+        for index in range(len(encoder)-1, -1, -1):
+            conv = encoder[index][0]
+            if index == len(encoder)-1:
+                self.first_out_channels = conv.out_channels
+                compressed_img_size = np.prod(self.compressed_img_shape) * self.first_out_channels
+            if index == 0:
+                out_channels = in_channels
+            else:
+                out_channels = conv.out_channels
 
-        hidden_channels = encoder.hidden_channels
-        kernel_size = encoder.kernel_size
-        stride = encoder.stride
-        batch_norm = encoder.batch_norm
-        skip_connections = encoder.skip_connections
-        non_linearity = encoder.non_linearity
-        mode = encoder.mode
-        max_pool_layers = encoder.max_pool_layers
+            deconv_layers.append(
+                torch.nn.LazyConvTranspose3d(
+                    out_channels=out_channels, 
+                    kernel_size=conv.kernel_size, 
+                    stride=conv.stride,
+                ))
+            deconv_layers.append(torch.nn.LeakyReLU())
+            deconv_layers.append(torch.nn.LazyBatchNorm3d())
 
-        self.compressed_img_shape = compressed_img_shape
-        compressed_img_size = np.prod(compressed_img_shape) * hidden_channels[0]
-        orig_img_size = np.prod(output_dims)
-
-        hidden_channels[-1] = output_channels
-        self.hidden_channels = hidden_channels
+        deconv = nn.Sequential(*deconv_layers)
+        self.deconv = deconv
         self.linear_decompress = nn.Linear(latent_dim, compressed_img_size)
-
-        self.deconv = BasicCNN(
-            hidden_channels[0],
-            output_dim=orig_img_size,
-            hidden_channels=hidden_channels,
-            input_dims=compressed_img_shape,
-            upsample_layers={
-                i: tuple(size) for (i, size) in enumerate(intermediate_sizes)
-            },
-            up_conv=True,
-            flat_output=False,
-            kernel_size=kernel_size,
-            mode=mode,
-            non_linearity=non_linearity,
-            skip_connections=skip_connections,
-            batch_norm=batch_norm,
-        )
 
     def forward(self, z):
         z = self.linear_decompress(z)
         z = z.view(
             z.shape[0],  # batch size
-            self.hidden_channels[0],
+            self.first_out_channels,
             *self.compressed_img_shape
         )
 
         z = self.deconv(z)
         z = z.clamp(max=50)
-
         return z
