@@ -1,8 +1,6 @@
 _aux_:
   _: &input1 "image"
   _: &input2 "rna"
-  _: &input1_binary 1
-  _: &input2_binary 0
   _: &latent_dim 10
   _: &in_channels 1
   _: &hidden_channels 4
@@ -24,14 +22,10 @@ _aux_:
       - *conv_block
       - *conv_block
       - *conv_block
-  _: &encoder:
-      _target_: torch.nn.Sequential
-      _args_:
-        - *encoder_conv
 
 _target_: crossmodal.models.CrossModalVAE
 latent_dim: [128]
-x_labels: ['image', 'rna']
+x_labels: [*input1, *input2]
 class_labels: []
 image_dims: 
 rna_dims: 
@@ -54,11 +48,11 @@ encoder:
 
 decoder:
   *input1:
-    _target_: crossmodal.models.networks.ImageDecoder3D
-    encoder: *encoder
-    input_dims: *input_dims
-    in_channels: *in_channels
-    latent_dim: *latent_dim
+      _target_: serotiny.networks.vae.ImageDecoder
+      encoder: *encoder_conv
+      input_dims: *input_dims
+      in_channels: *in_channels
+      latent_dim: *latent_dim
   *input2: 
     _target_: serotiny.networks.MLP
     scale_output: 1
@@ -68,79 +62,92 @@ decoder:
     - ${rna_dims}
 
 reconstruction_loss:
-  "image+image":
+  *input1:
     _target_: torch.nn.MSELoss
-    reduction: 'none'
-  "rna+rna":
+    reduction: 'mean'
+  *input2:
     _target_: torch.nn.MSELoss
-    reduction: 'none'
-  "image+rna":
-    _target_: torch.nn.MSELoss
-    reduction: "none"
-  "rna+image"
-    _target_: torch.nn.MSELoss
-    reduction: "none"
+    reduction: 'mean'
 
 latent_loss:
   *input1:
-    _target_: serotiny.losses.AdversarialLoss
-    discriminator:
-      _target_: serotiny.networks.MLP
-      hidden_layers: [64]
-      _args_: 
-      - ${model.latent_dim}
-      - 1
-    loss:
-      _target_: torch.nn.BCELoss
-    argmax: True
+    net1: # for cell cycle classification
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator:
+        _target_: serotiny.networks.MLP
+        hidden_layers: [10]
+        _args_: 
+        - ${model.latent_dim}
+        - 9
+      loss:
+        _target_: torch.nn.CELoss
+      argmax: True
+    net2: # for predicting image or RNA
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator:
+        _target_: serotiny.networks.MLP
+        hidden_layers: [64]
+        _args_: 
+        - ${model.latent_dim}
+        - 1
+      loss:
+        _target_: torch.nn.BCELoss
   *input2:
-    _target_: serotiny.losses.AdversarialLoss
-    discriminator:
-      _target_: serotiny.networks.MLP
-      hidden_layers: [64]
-      _args_: 
-      - ${model.latent_dim}
-      - 1
-    loss:
-      _target_: torch.nn.BCELoss
-    argmax: True
+    net1:
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator:
+        _target_: serotiny.networks.MLP
+        hidden_layers: [10]
+        _args_: 
+        - ${model.latent_dim}
+        - 9
+      loss:
+        _target_: torch.nn.CELoss
+      argmax: True
+    net2:
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator:
+        _target_: serotiny.networks.MLP
+        hidden_layers: [64]
+        _args_: 
+        - ${model.latent_dim}
+        - 1
+      loss:
+        _target_: torch.nn.BCELoss
 
 prior:
   *input1: 
-    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
-    dimensionality: ${model.latent_dim}
+    net1:
+      _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+      dimensionality: ${model.latent_dim}
   *input2: 
-    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
-    dimensionality: ${model.latent_dim}
+    net2:
+      _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+      dimensionality: ${model.latent_dim}
 
 latent_loss_weights:
   *input1: [1,1,1,1,1]
   *input2: [1,1,1,1,1]
 
 latent_loss_target:
-  class_labels: class_labels
+  *input1:
+    net1: ${data.loaders.class}
+    net2: [1, 1, 1, 1, 0]
+  *input2:
+    net1: ${data.loaders.class}
+    net2: [0, 0, 0, 0, 0]
 
-changing_latent_loss_target:
+latent_loss_backprop_when: # when to optimize each subnetwork
   *input1: 
-    - [*input1_binary]
-    - [*input1_binary]
-    - [*input1_binary]
-    - [*input1_binary]
-    - [*input2_binary]
+    net1: 1
+    net2: 1
   *input2: 
-    - [*input2_binary]
-    - [*input2_binary]
-    - [*input2_binary]
-    - [*input2_binary]
-    - [*input1_binary]
-
-# latent_loss_backprop_when: # when to optimize each subnetwork
-#   image: [1, 5]
-#   rna: [1, 5]
+    net1: 1
+    net2: 1
 
 latent_loss_optimizer: 
   adv:
-    keys: ['image', 'rna']
+    keys: [*input1, *input2]
     opt:
       _partial_: true
       _target_: torch.optim.adam.Adam
@@ -154,7 +161,7 @@ latent_loss_scheduler:
 
 optimizer: 
   main:
-    keys: ['image', 'rna']
+    keys: [*input1, *input2]
     opt:
       _partial_: true
       _target_: torch.optim.Adam

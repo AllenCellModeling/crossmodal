@@ -1,1 +1,1 @@
-from .networks import ImageDecoder3D
+from .crossmodalvae import CrossModalVAE

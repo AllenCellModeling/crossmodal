@@ -9,45 +9,33 @@ from torch.optim.lr_scheduler import _LRScheduler as LRScheduler
 from serotiny.models.vae.base_vae import BaseVAE
 from serotiny.models.vae.priors import Prior
 import torch.nn.functional as F
+from omegaconf import ListConfig
 
 
 from typing import Optional, Sequence
 from itertools import chain
 from omegaconf import DictConfig
 
-import torch
-import torch.nn as nn
-from torch.nn.modules.loss import _Loss as Loss
-from torch.optim.lr_scheduler import _LRScheduler as LRScheduler
-from .base_vae import BaseVAE
-from .priors import Prior
-import torch.nn.functional as F
 
-
-class CrossModalVAE(LatentLossVAE):
+class CrossModalVAE(BaseVAE):
     def __init__(
         self,
         encoder: nn.Module,
         decoder: nn.Module,
+        x_labels: list,
         latent_dim: int,
-        x_label: str,
-        x_dim: str,
-        output_dim: str,
-        continuous_labels: list,
-        discrete_labels: list,
         latent_loss: dict,
         latent_loss_target: dict,
         latent_loss_weights: dict,
-        latent_loss_backprop_when: dict = None,
-        prior: dict = None,
-        latent_loss_optimizer: torch.optim.Optimizer = torch.optim.Adam,
-        latent_loss_scheduler: LRScheduler = torch.optim.lr_scheduler.StepLR,
-        beta: float = 1.0,
-        id_label: Optional[str] = None,
-        optimizer: torch.optim.Optimizer = torch.optim.Adam,
-        lr_scheduler: torch.optim.lr_scheduler._LRScheduler = torch.optim.lr_scheduler.StepLR,
-        loss_mask_label: Optional[str] = None,
-        reconstruction_loss: torch.nn.modules.loss._Loss = nn.MSELoss(reduction="none"),
+        latent_loss_backprop_when: dict,
+        prior: dict,
+        latent_loss_optimizer: dict,
+        latent_loss_scheduler: dict,
+        beta: float,
+        optimizer: dict,
+        reconstruction_loss: dict,
+        lr_scheduler: dict,
+        id_label: Optional[str],
         cache_outputs: Sequence = ("test",),
         **kwargs,
     ):
@@ -55,109 +43,41 @@ class CrossModalVAE(LatentLossVAE):
             encoder=encoder,
             decoder=decoder,
             latent_dim=latent_dim,
-            x_label=x_label,
+            x_label=x_labels[0],
             beta=beta,
             id_label=id_label,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            loss_mask_label=loss_mask_label,
             reconstruction_loss=reconstruction_loss,
             prior=prior,
             cache_outputs=cache_outputs,
             **kwargs,
         )
+        self.x_labels = x_labels
 
-        self.continuous_labels = continuous_labels
-        self.discrete_labels = discrete_labels
-        self.comb_label = self.continuous_labels[-1] + f"_{self.continuous_labels[0]}"
-
-        if not isinstance(latent_loss, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss = {x_label: latent_loss}
         self.latent_loss = latent_loss
-        self.latent_loss = nn.ModuleDict(latent_loss)
-
-        if not isinstance(latent_loss_target, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss_target = {x_label: latent_loss_target}
         self.latent_loss_target = latent_loss_target
-
-        if not isinstance(latent_loss_weights, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss_weights = {x_label: latent_loss_weights}
         self.latent_loss_weights = latent_loss_weights
-
-        if not isinstance(latent_loss_backprop_when, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss_backprop_when = {x_label: latent_loss_backprop_when}
-        self.latent_loss_backprop_when = latent_loss_backprop_when
-
-        if not isinstance(latent_loss_optimizer, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss_optimizer = {x_label: latent_loss_optimizer}
         self.latent_loss_optimizer = latent_loss_optimizer
-
-        if not isinstance(latent_loss_optimizer, (dict, DictConfig)):
-            assert x_label is not None
-            latent_loss_scheduler = {x_label: latent_loss_scheduler}
         self.latent_loss_scheduler = latent_loss_scheduler
-
+        self.latent_loss_backprop_when = latent_loss_backprop_when
         self.automatic_optimization = False
 
-    def sample_z(self, batch, z_parts_params):
-        return {
-            part: self.priors[part](z_parts_params[part], mode="sample")
-            for part, _ in batch.items()
-        }
-
-    def forward(self, batch, decode=False, compute_loss=False, **kwargs):
-
-        batch = self.parse_batch(batch)
-
-        z_parts_params = self.encode(batch)
-
-        z_parts = self.sample_z(batch, z_parts_params)
-
-        recon_parts = self.decode(z_parts)
-
-        if not decode:
-            return z_parts_params
-
-        if not compute_loss:
-            return recon_parts, z_parts, z_parts_params
-
-        (loss, reconstruction_loss_parts, kld_loss, kld_per_part,) = self.calculate_elbo(
-            batch, recon_parts, z_parts_params, mask=mask
-        )
-
-        return (
-            recon_parts,
-            z_parts,
-            z_parts_params,
-            loss,
-            reconstruction_loss_parts,
-            kld_loss,
-            kld_per_part,
-        )
-
-    def encode(self, batch):
-        return {part: self.encoder[part](this_batch.float()) for part, this_batch in batch.items()}
-
-    def decode(self, z_parts):
-        return {part: self.decoder[part](this_batch.float()) for part, this_batch in batch.items()}
-
     def _step(self, stage, batch, batch_idx, logger):
+
         (
             recon_parts,
             z_parts,
             z_parts_params,
+            z_composed,
             loss,
             reconstruction_loss_parts,
             kld_loss,
             kld_per_part,
         ) = self.forward(batch, decode=True, compute_loss=True)
+
         mu = {}
-        for x_label in self.hparams.x_labels:
+        for x_label in self.x_labels:
             mu[x_label] = z_parts_params[x_label]
             if mu[x_label].shape[1] != self.latent_dim:
                 mu[x_label] = mu[x_label][:, :int(mu[x_label].shape[1]/2)]
@@ -166,17 +86,24 @@ class CrossModalVAE(LatentLossVAE):
         weighted_adv_loss = 0
         adv_loss = 0
         for part in self.latent_loss.keys():
-            this_mu = mu[part]
-            this_idx = self.current_epoch % batch_idx
+            part_mu = mu[part]
+            _loss[part] = {}
 
-            if isinstance(self.latent_loss[part].loss, torch.nn.modules.loss.BCEWithLogitsLoss):
-                target = torch.ones(mu.size()).fill_(self.latent_loss_target[part][this_idx])
-            
-            _loss[part] = self.latent_loss[part](
-                mu.float(), target
-            ) 
-            adv_loss += _loss[part]
-            weighted_adv_loss += _loss[part] * self.latent_loss_weights[part][this_idx]
+            for sub_net in self.latent_loss[part].keys():
+                if isinstance(self.latent_loss_target[part][sub_net], (list, ListConfig)):
+                    targets = []
+                    for n in range(len(self.latent_loss_target[part][sub_net])):
+                        target = torch.ones(part_mu.size()[0],1).fill_(self.latent_loss_target[part][sub_net][n])
+                        targets.append(target)
+                else:
+                    targets = [batch[self.latent_loss_target[part][sub_net]]]
+
+                for target in targets:
+                    _loss[part][sub_net] = self.latent_loss[part][sub_net](
+                        part_mu.float(), target
+                    ) 
+                    adv_loss += _loss[part][sub_net]
+                    weighted_adv_loss += _loss[part][sub_net] * self.latent_loss_weights[part][sub_net]
 
         if stage != 'test':
             optimizers = self.optimizers()
@@ -215,7 +142,7 @@ class CrossModalVAE(LatentLossVAE):
                 for non_main_optim in non_main_optims:
                     non_main_optim.zero_grad()
                 
-                self.manual_backward(reconstruction_loss + self.beta*kld_loss - weighted_adv_loss)
+                self.manual_backward(sum(reconstruction_loss_parts.values()) + self.beta*kld_loss + weighted_adv_loss)
                 # self.manual_backward(reconstruction_loss - adv_loss)
                 main_optim.step()
                 for non_main_optim in non_main_optims:
@@ -226,29 +153,30 @@ class CrossModalVAE(LatentLossVAE):
                 # for non_main_lr_sched in non_main_lr_scheds:
                 #     non_main_lr_sched.step()
 
-        loss = reconstruction_loss + self.beta*kld_loss - weighted_adv_loss
+        loss = sum(reconstruction_loss_parts.values()) + self.beta*kld_loss + weighted_adv_loss
 
         results = self.make_results_dict(
             stage,
             batch,
             loss,
-            reconstruction_loss,
+            reconstruction_loss_parts,
             kld_loss,
             kld_per_part,
             z_parts,
             z_parts_params,
             z_composed,
-            x_hat,
+            recon_parts,
         )
 
         for part, value in _loss.items():
-            results.update(
-                {
-                    f"adv_loss/{part}": value.detach().cpu(),
-                }
-            )
+            for sub_net, sub_net_val in value.items():
+                results.update(
+                    {
+                        f"adv_loss/{part}/{sub_net}": sub_net_val.detach().cpu(),
+                    }
+                )
 
-        self.log_metrics(stage, results, logger, x_hat.shape[0])
+        self.log_metrics(stage, results, logger, batch[self.x_labels[0]].shape[0])
 
         return results
 
@@ -283,14 +211,16 @@ class CrossModalVAE(LatentLossVAE):
             lr_schedulers.append(self.lr_scheduler[non_main_key](optimizer=optimizers[-1]))
 
         self.latent_loss_optimizer_map = dict()
+
         for optim_ix, (group_key, group) in enumerate(self.latent_loss_optimizer.items()):
+
             self.latent_loss_optimizer_map[optim_ix] = group_key
-            _parameters3 = (
-                get_params(self.latent_loss[group['keys'][0]])
-            )
-            if len(group['keys']) > 1:
-                for key in group['keys'][1:]:
-                    _parameters3.extend(get_params(self.latent_loss[key]))
+            _parameters3 = []
+            for key in  group['keys']:
+                for part in self.latent_loss[key].keys():
+                    this_net = self.latent_loss[key][part]
+                    this_net_params = get_params(this_net)
+                    _parameters3 += this_net_params
             optimizers.append(group['opt'](_parameters3))
             lr_schedulers.append(self.latent_loss_scheduler[group_key](optimizer=optimizers[-1]))
 

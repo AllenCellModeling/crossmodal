@@ -1,0 +1,184 @@
+_aux_:
+  _a: &input1 "2d_max_project"
+  _b: &input2 "3d_image"
+  _c: &input1_dims [253, 386] 
+  _d: &input2_dims [26, 63, 96]
+  _e: &latent_dim 128
+  _f: &twice_latent_dim 256
+  _g: &in_channels1 1
+  _h: &in_channels2 1
+  _i: &hidden_channels 4
+  _j: &kernel_size 3
+  _k: &stride 1
+  _l: &input_dims [36, 72, 91]
+  _m: &conv_block1
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.LazyConv2d
+        out_channels: *hidden_channels
+        kernel_size: *kernel_size
+        stride: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.LazyBatchNorm2d
+  _n: &encoder_conv1
+    _target_: torch.nn.Sequential
+    _args_:
+      - *conv_block1
+      - *conv_block1
+      - *conv_block1
+  _o: &conv_block2
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.LazyConv3d
+        out_channels: *hidden_channels
+        kernel_size: *kernel_size
+        stride: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.LazyBatchNorm3d
+  _p: &encoder_conv2
+    _target_: torch.nn.Sequential
+    _args_:
+      - *conv_block2
+      - *conv_block2
+      - *conv_block2
+  _q: &latent_net1
+    _target_: serotiny.networks.MLP
+    hidden_layers: [10]
+    _args_: 
+    - *latent_dim
+    - 9
+  _r: &latent_net2
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: serotiny.networks.MLP
+        hidden_layers: [64]
+        _args_: 
+        - *latent_dim
+        - 1
+      - _target_: torch.nn.Sigmoid
+
+_target_: crossmodal.models.CrossModalVAE
+latent_dim: *latent_dim
+x_labels: [*input1, *input2]
+input_dims: [*input1_dims, *input2_dims]
+beta: 1
+id_label: 'id'
+encoder:
+  *input1:
+    _target_: torch.nn.Sequential
+    _args_:
+      - *encoder_conv1
+      - _target_: serotiny.networks.layers.Flatten
+      - _target_: torch.nn.LazyLinear
+        out_features: *twice_latent_dim
+  *input2: 
+    _target_: torch.nn.Sequential
+    _args_:
+      - *encoder_conv2
+      - _target_: serotiny.networks.layers.Flatten
+      - _target_: torch.nn.LazyLinear
+        out_features: *twice_latent_dim
+reconstruction_loss:
+  *input1:
+    _target_: torch.nn.MSELoss
+    reduction: 'mean'
+  *input2:
+    _target_: torch.nn.MSELoss
+    reduction: 'mean'
+
+decoder:
+  *input1:
+      _target_: serotiny.networks.vae.ImageDecoder
+      encoder: *encoder_conv1
+      input_dims: *input1_dims
+      in_channels: *in_channels1
+      latent_dim: *latent_dim
+  *input2: 
+      _target_: serotiny.networks.vae.ImageDecoder
+      encoder: *encoder_conv2
+      input_dims: *input2_dims
+      in_channels: *in_channels2
+      latent_dim: *latent_dim
+
+latent_loss:
+  *input1:
+    net1: # for cell cycle classification
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator: *latent_net1
+      loss:
+        _target_: torch.nn.CrossEntropyLoss
+      argmax: False
+    net2: # for predicting image or RNA
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator: *latent_net2
+      loss:
+        _target_: torch.nn.BCELoss
+      argmax: False
+  *input2:
+    net1:
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator: *latent_net1
+      loss:
+        _target_: torch.nn.CrossEntropyLoss
+      argmax: False
+    net2:
+      _target_: serotiny.losses.AdversarialLoss
+      discriminator: *latent_net2
+      loss:
+        _target_: torch.nn.BCELoss
+      argmax: False
+
+prior:
+  *input1: 
+    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+    dimensionality: *latent_dim
+  *input2: 
+    _target_: serotiny.models.vae.priors.IsotropicGaussianPrior
+    dimensionality: *latent_dim
+
+latent_loss_weights:
+  *input1: 
+    net1: 0.5
+    net2: 0.5
+  *input2:
+    net1: 0.5
+    net2: 0.5
+
+latent_loss_target:
+  *input1:
+    net1: class
+    net2: [0] # number of times loss is computed
+  *input2:
+    net1: class
+    net2: [1]
+
+latent_loss_backprop_when:
+  adv: 1
+  
+latent_loss_optimizer: 
+  adv:
+    keys: [*input1, *input2]
+    opt:
+      _partial_: true
+      _target_: torch.optim.adam.Adam
+      lr: 0.001
+
+latent_loss_scheduler: 
+  adv:
+    _partial_: true
+    _target_: torch.optim.lr_scheduler.StepLR
+    step_size: 45
+
+optimizer: 
+  main:
+    keys: [*input1, *input2]
+    opt:
+      _partial_: true
+      _target_: torch.optim.Adam
+      lr: 1e-3
+
+lr_scheduler:
+  main:
+    _partial_: true
+    _target_: torch.optim.lr_scheduler.StepLR
+    step_size: 45
