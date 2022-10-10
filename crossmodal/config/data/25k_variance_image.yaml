@@ -1,0 +1,27 @@
+_target_: serotiny.datamodules.ManifestDatamodule
+
+path: /storage/variance_subset/manifest_splits_10k.csv
+batch_size: 512
+num_workers: 32
+loaders:
+  image:
+    _target_: serotiny.io.dataframe.loaders.LoadImage
+    column: resized_0.25x
+    select_channels: ['dna_raw']
+    reader: aicsimageio.readers.ome_tiff_reader.OmeTiffReader
+    dtype: float32
+    force_3d: True
+  cell_id:
+    _target_: serotiny.io.dataframe.loaders.LoadColumns
+    contains: "cell_id"
+
+split_column: split
+columns:
+persistent_workers: True
+pin_memory: True
+multiprocessing_context: fork
+# collate:
+# pin_memory: True
+# shuffle:  True
+# drop_last:  False
+# multiprocessing_context: fork

@@ -1,0 +1,30 @@
+_target_: serotiny.datamodules.ManifestDatamodule
+
+path: /allen/aics/modeling/ritvik/pcna/register/manifest_splits.csv
+batch_size: 5
+num_workers: 50
+loaders:
+  id:
+    _target_: serotiny.io.dataframe.loaders.LoadColumns
+    contains: "index"
+  class:
+    _target_: serotiny.io.dataframe.loaders.LoadClass
+    y_encoded_label: cell_stage_fine_numeric
+    num_classes: 9
+    binary: False 
+  image:
+    _target_: serotiny.io.dataframe.loaders.LoadImage
+    column: registered_path
+    select_channels: ['dna_segmentation']
+    return_as_torch: True
+    dtype: float32
+    force_3d: True
+    ome_zarr_level: 2 # resolution
+    transform: 
+      - _target_: torchio.transforms.RescaleIntensity
+        out_min_max: [0, 1]
+split_column: 'split'
+# pin_memory: True
+# shuffle:  True
+# drop_last:  False
+# persistent_workers: True
